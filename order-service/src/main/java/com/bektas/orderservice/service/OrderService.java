@@ -1,5 +1,6 @@
 package com.bektas.orderservice.service;
 
+import com.bektas.orderservice.dto.InventoryResponse;
 import com.bektas.orderservice.dto.OrderLineItemsDto;
 import com.bektas.orderservice.dto.OrderRequest;
 import com.bektas.orderservice.model.Order;
@@ -8,7 +9,9 @@ import com.bektas.orderservice.repository.OrderRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.reactive.function.client.WebClient;
 
+import java.util.Arrays;
 import java.util.List;
 import java.util.UUID;
 
@@ -19,6 +22,7 @@ import java.util.UUID;
 public class OrderService {
 
     private final OrderRepository orderRepository;
+    private final WebClient webClient;
 
     public void placeOrder(OrderRequest orderRequest) {
         Order order = new Order();
@@ -30,7 +34,22 @@ public class OrderService {
                 .toList();
         order.setOrderLineItems(orderLineItems);
 
-        orderRepository.save(order);
+        List<String> skuCodes = order.getOrderLineItems().stream().map(OrderLineItems::getSkuCode).toList();
+
+        InventoryResponse[] response = webClient
+                .get()
+                .uri("http://localhost:8082/api/inventory", uriBuilder -> uriBuilder.queryParam("skuCode", skuCodes).build())
+                .retrieve()
+                .bodyToMono(InventoryResponse[].class)
+                .block();
+
+        boolean allInStock = Arrays.stream(response).allMatch(InventoryResponse::isInStock);
+
+        if (allInStock) {
+            orderRepository.save(order);
+        } else {
+            throw new IllegalArgumentException("Product is not in stock, please try again later");
+        }
     }
 
     private OrderLineItems mapToOrderLineItems(OrderLineItemsDto dto) {
